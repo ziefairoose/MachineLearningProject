@@ -1,0 +1,173 @@
+---
+title: "Machine Learning Project"
+author: "zuraini othman"
+date: "Tuesday, December 15, 2015"
+output: md_document
+---
+# Machine Learning Project
+===================================
+
+Initial setup.
+```{r loading-stuff}
+library(caret)
+library(ggplot2)
+set.seed(88388)
+# setwd("/Users/01043/Google Drive/coursera/ProjectMACHLEARNING")
+```
+## Data analysis
+
+Read training data and plot some statistics, e.g.,  frequency of classes (A through E). The task is to predict activity classes from accelerator measurements of participants performing barbell exercises.
+
+```{r freqplot,cache=TRUE}
+trainRaw=read.table("pml-training.csv",header=TRUE,sep=",")  
+barplot(table(trainRaw$classe),xlab="classe",ylab="counts",main="Classes")
+dim(trainRaw)
+```
+
+The training file is rather balanced (more of class A, but not very skewed) and has 19622 instances and 159 variables (the 160th variable is the output to predict, called "classe" that is a factor with 5 levels). The ```str``` command shows that many columns contain lots of NA's and that a lot of real-valued data is surrounded by quotes and was thus interpreted incorrectly as factor. 
+
+## Data preparation
+
+We now remove all data columns which consist of more than 90% NAs. The data set has now a much lower dimension (93 columns).
+
+```{r NAs}
+train=trainRaw[,colSums(is.na(trainRaw))<(nrow(trainRaw)*0.9)]
+dim(train)
+```
+
+For the remaining columns, we inspect them with ```str``` to remove those that make less sense (i.e., counters, meta-data, time-related columns).
+
+```{r remove cols}
+#names(train)
+str(train)
+#remove columns
+train=subset(train, select=-c(X,user_name,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp,new_window,num_window, kurtosis_yaw_belt,skewness_yaw_belt,max_yaw_belt,min_yaw_belt,amplitude_yaw_belt,kurtosis_yaw_dumbbell,skewness_yaw_dumbbell,amplitude_yaw_dumbbell,amplitude_yaw_dumbbell,skewness_yaw_forearm,amplitude_yaw_forearm,min_yaw_forearm,max_yaw_forearm,skewness_pitch_forearm,skewness_roll_forearm,kurtosis_yaw_forearm,kurtosis_picth_forearm,kurtosis_roll_forearm,max_yaw_dumbbell,min_yaw_dumbbell ))
+dim(train)
+#summary(train)
+```
+
+We are now down to 67 columns. Inspect again and make sure that all columns are in the right format, otherwise cast them. 
+
+```{r cast}
+train$kurtosis_roll_belt=as.numeric(train$kurtosis_roll_belt)
+train$kurtosis_picth_belt=as.numeric(train$kurtosis_picth_belt)
+train$skewness_roll_belt=as.numeric(train$skewness_roll_belt)
+train$skewness_roll_belt.1=as.numeric(train$skewness_roll_belt.1)
+train$kurtosis_roll_arm=as.numeric(train$kurtosis_roll_arm)
+train$kurtosis_picth_arm=as.numeric(train$kurtosis_picth_arm)
+train$kurtosis_yaw_arm=as.numeric(train$kurtosis_yaw_arm)
+train$skewness_roll_arm=as.numeric(train$skewness_roll_arm)
+train$skewness_pitch_arm=as.numeric(train$skewness_pitch_arm)
+train$skewness_yaw_arm=as.numeric(train$skewness_yaw_arm)
+train$kurtosis_roll_dumbbell=as.numeric(train$kurtosis_roll_dumbbell)
+train$kurtosis_picth_dumbbell=as.numeric(train$kurtosis_picth_dumbbell)
+train$skewness_roll_dumbbell=as.numeric(train$skewness_roll_dumbbell)
+train$skewness_pitch_dumbbell=as.numeric(train$skewness_pitch_dumbbell)
+```
+
+Now the train data is in the right format, and lets train models. 
+
+## Train models on selected data and evaluate on held-out set
+
+We now split the data into parts, and for initial inspection train models only on a random sample of 1000 train and 1000 dev instances to select which method to take. We use Naive Bayes (NB) as baseline method. Since the measurements are clearly not independent, we expect it to work badly. We expect random forests to work well, and compare them to support vector machines (SVM) with a linear and polynomial kernel. 
+
+```{r initial-models,cache=TRUE}
+inTrain <- createDataPartition(train$classe, p=0.7,list=FALSE) #same as [[1]] instead of list=FALSE
+length(inTrain)
+inTrain=sample(inTrain,size=1000,replace=FALSE) #subset for testing
+training <- train[inTrain,]
+testing <- train[-inTrain,]
+testing=testing[sample(nrow(testing), 1000),] #random rows
+# we try several models for fun
+model=train(classe~.,data=training,method="rf")
+#model=train(classe~.,data=training,method="nb")
+#model=train(classe~.,data=training,method="svmLinear")
+#model=train(classe~.,data=training,method="svmPoly")
+model
+predictions=predict(model,newdata=testing)
+accuracy=sum(predictions == testing$classe)/length(testing$classe) #or:
+confusionMatrix(predictions,testing$classe)
+```
+
+In fact, the worst model is naive Bayes (NB). The best model is -- as expected -- random forest. More specifically, on the 1000 data sample, the accuracies we get are:
+
+* NB accuracy: 60%, 
+* RF accuracy: 90.8%
+* svmLinear: 69.7%
+* svmPoly: 80.1%
+
+## Feature selection
+We now want to find the top-20 features of the RF model and train on the whole data set partition.
+
+```{r inspect}
+varImp(model)
+```
+
+Lets plot some of these features to get a feeling how well they distinguish the classes.
+
+```{r qplot}
+qplot(magnet_dumbbell_z,pitch_forearm,data=training,color=classe)
+```
+
+The figure above shows that, for instance, class A and D are nicely separable using this two variables.
+
+We now use only the top-20 features to train an RF model.
+```
+inTrain <- createDataPartition(train$classe, p=0.7,list=FALSE) #same as [[1]] instead of list=FALSE
+length(inTrain)
+training <- train[inTrain,]
+testing <- train[-inTrain,]
+training=subset(training,select=c(roll_belt,pitch_forearm,magnet_dumbbell_z,magnet_dumbbell_y,yaw_belt,pitch_belt,roll_forearm,magnet_dumbbell_x,roll_dumbbell,magnet_belt_z,accel_forearm_x,accel_dumbbell_y,gyros_dumbbell_y,roll_arm,magnet_belt_x,accel_belt_z,magnet_belt_y,accel_dumbbell_z,magnet_forearm_x ,magnet_forearm_x,total_accel_dumbbell,classe))
+testing=subset(testing,select=c(roll_belt,pitch_forearm,magnet_dumbbell_z,magnet_dumbbell_y,yaw_belt,pitch_belt,roll_forearm,magnet_dumbbell_x,roll_dumbbell,magnet_belt_z,accel_forearm_x,accel_dumbbell_y,gyros_dumbbell_y,roll_arm,magnet_belt_x,accel_belt_z,magnet_belt_y,accel_dumbbell_z,magnet_forearm_x ,magnet_forearm_x,total_accel_dumbbell,classe))
+dim(training)
+```
+We get the same accuracy (88.9%) but this is faster to train (takes 2/3 of the time). We will use this set of features with RF for our final model.
+
+So far we have trained models on only a subset of the data. To get an estimate of the out-of-sample error we train a random forest model on the whole training data using cross-validation. 
+
+```
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 10)
+model=train(classe~.,data=training,method="rf",trControl=fitControl)
+``` 
+This takes quite some time to finish, nevertheless, from the cross validation accuracy (98.9%) we can get an estimated of the out-of-sample performance. 
+
+## Final model 
+
+Now we train the final model using the seleted features on the entire training data set and evaluate it on the test set of 20 instances.
+
+```
+model=train(classe~.,data=training,method="rf")
+predictions=predict(model,newdata=testing)
+accuracy=sum(predictions == testing$classe)/length(testing$classe) #or:
+accuracy
+confusionMatrix(predictions,testing$classe)
+```
+
+We reach an accuracy of 99.81% on the held-out set. More specifically, the sensitivity and specificity per class is, respectively: A 0.9988/0.9993, B 0.9939/0.9992, C 0.9981/0.9992, D 1.0/1.0, E 1.0/1.0. 
+
+Now we run it on the real test data and write the predictions to the files. Submitting the test run on the website shows that we actually got an accuracy of 100% (with just 20 features). Thus, our estimate carried nicely over. Yeah!
+
+```
+testRaw=read.table("data/pml-testing.csv",header=TRUE,sep=",")  
+testing=subset(testRaw,select=c(roll_belt,pitch_forearm,magnet_dumbbell_z,magnet_dumbbell_y,yaw_belt,pitch_belt,roll_forearm,magnet_dumbbell_x,roll_dumbbell,magnet_belt_z,accel_forearm_x,accel_dumbbell_y,gyros_dumbbell_y,roll_arm,magnet_belt_x,accel_belt_z,magnet_belt_y,accel_dumbbell_z,magnet_forearm_x ,magnet_forearm_x,total_accel_dumbbell))
+dim(testing)
+predictionsTest=predict(model,newdata=testing)
+length(predictionsTest)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(predictionsTest)
+```
+
+### References
+[1] http://groupware.les.inf.puc-rio.br/har
+
+[2] Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. 
